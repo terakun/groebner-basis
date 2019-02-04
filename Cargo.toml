@@ -1,0 +1,7 @@
+[package]
+name = "groebner-basis"
+version = "0.1.0"
+authors = ["Terasaki Shun <t.tera1217@gmail.com>"]
+edition = "2018"
+
+[dependencies]
