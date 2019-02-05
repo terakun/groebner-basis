@@ -10,7 +10,14 @@ struct MultiIdx {
 }
 
 impl MultiIdx {
-    fn hoge() {}
+    fn is_const(&self) -> bool {
+        for i in &self.idx {
+            if *i != 0 {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Ord for MultiIdx {
@@ -73,6 +80,23 @@ impl Term {
     fn devisible(&self, other: &Term) -> bool {
         (other.coeff % self.coeff == Rational::from(0)) && self.mono.devisible(&other.mono)
     }
+    fn devide(&self, other: Term) -> Option<Self> {
+        if self.devisible(&other) {
+            Some(Term {
+                coeff: other.coeff / self.coeff,
+                mono: MultiIdx {
+                    idx: self.mono
+                        .idx
+                        .iter()
+                        .zip(other.mono.idx)
+                        .map(|(a, b)| b - *a)
+                        .collect(),
+                },
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl std::ops::Mul for Term {
@@ -105,7 +129,19 @@ impl Polynomial {
             n: n,
         }
     }
-    // fn leading_term(&self) -> Term {}
+    fn leading_term(&self) -> Term {
+        let t = self.p.iter().next_back().unwrap();
+        Term::from((t.0.clone(), t.1.clone()))
+    }
+
+    fn is_zero(&self) -> bool {
+        for (_, c) in self.p.iter() {
+            if *c != Rational::from(0) {
+                return false;
+            }
+        }
+        true
+    }
     fn from_integer_vec(ivec: Vec<(i64, Vec<u64>)>) -> Self {
         let n = ivec[0].1.len();
         let mut p = BTreeMap::new();
@@ -118,6 +154,9 @@ impl Polynomial {
     fn add_term(&mut self, term: &Term) {
         if let Some(c) = self.p.get_mut(&term.mono) {
             *c += term.coeff;
+            if *c == Rational::from(0) {
+                self.p.remove(&term.mono);
+            }
         } else {
             self.p.insert(term.mono.clone(), term.coeff.clone());
         }
@@ -125,9 +164,21 @@ impl Polynomial {
     fn sub_term(&mut self, term: &Term) {
         if let Some(c) = self.p.get_mut(&term.mono) {
             *c -= term.coeff;
+            if *c == Rational::from(0) {
+                self.p.remove(&term.mono);
+            }
         } else {
             self.p.insert(term.mono.clone(), -term.coeff);
         }
+    }
+    fn mul_term(&mut self, term: &Term) {
+        let mut p = BTreeMap::new();
+        for (mono, coeff) in self.p.iter() {
+            let t = Term::from((mono.clone(), coeff.clone()));
+            let mul_t = t * term.clone();
+            p.insert(mul_t.mono, mul_t.coeff);
+        }
+        self.p = p;
     }
 }
 
@@ -155,11 +206,11 @@ impl std::ops::Sub for Polynomial {
         if self.n != other.n {
             panic!("error");
         }
-        let mut p = other.clone();
-        for t_self in self.p {
+        let mut p = self.clone();
+        for t_other in other.p {
             p.sub_term(&Term {
-                coeff: t_self.1,
-                mono: t_self.0,
+                coeff: t_other.1,
+                mono: t_other.0,
             });
         }
         p
@@ -182,39 +233,72 @@ impl std::ops::Mul for Polynomial {
     }
 }
 
+impl fmt::Display for Polynomial {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut s: Vec<String> = Vec::new();
+        for (mono, coeff) in self.p.iter() {
+            let sign = if *coeff > Rational::from(0) {
+                "+".to_string()
+            } else {
+                "".to_string()
+            };
+            let coeff_s = if *coeff != Rational::from(1) && *coeff != Rational::from(-1) {
+                format!("{}", coeff)
+            } else if *coeff == Rational::from(-1) {
+                "-".to_string()
+            } else {
+                "".to_string()
+            };
+            let mono_s = if mono.is_const()
+                && (*coeff == Rational::from(1) || *coeff == Rational::from(-1))
+            {
+                "1".to_string()
+            } else {
+                format!("{}", mono)
+            };
+            s.push(format!("{}{}{}", sign, coeff_s, mono_s));
+        }
+        write!(f, "{}", s.join(" "))
+    }
+}
+
 struct Ideal(Vec<Polynomial>);
 
 impl Ideal {
     fn new() -> Self {
         Ideal(Vec::new())
     }
-    // fn devisible(&self, f: &Polynomial) -> bool {
-    //     for g in &self.0 {
-    //         if g.p[0].devisible(&f.p[0]) {
-    //             return true;
-    //         }
-    //     }
-    //     false
-    // }
+    fn devisible(&self, f: &Polynomial) -> Option<usize> {
+        for (i, g) in self.0.iter().enumerate() {
+            if g.leading_term().devisible(&f.leading_term()) {
+                return Some(i);
+            }
+        }
+        None
+    }
 
     // returns (quotient,remainder)
-    // fn devide(&self, f: &Polynomial) -> (Vec<Polynomial>, Polynomial) {
-    //     let mut quotient = Vec::new();
-    //     let mut remainder = Polynomial { p: Vec::new() };
-    //     let mut f = f.clone();
-    //     while f.is_zero() {
-    //         f = if let Some(g) = self.devisible(&f) {
-    //             let (q, r) = g.devides(f);
-    //             f - g * q
-    //         } else {
-    //             let lt = f.leading_term();
-    //             remainder += lt;
-    //             f - lt
-    //         }
-    //     }
-    //
-    //     (quotient, Polynomial { p: Vec::new() })
-    // }
+    fn devide(&self, f: &Polynomial) -> (Vec<Polynomial>, Polynomial) {
+        let mut quotient = vec![Polynomial::new(self.0[0].n); self.0.len()];
+        let mut remainder = Polynomial::new(self.0[0].n);
+        let mut f = f.clone();
+        while !f.is_zero() {
+            println!("{}", f);
+            if let Some(i) = self.devisible(&f) {
+                let q = self.0[i].leading_term().devide(f.leading_term()).unwrap();
+                quotient[i].add_term(&q);
+                let mut gq = self.0[i].clone();
+                gq.mul_term(&q);
+                f = f - gq;
+            } else {
+                let lt = f.leading_term();
+                remainder.add_term(&lt);
+                f.sub_term(&lt);
+            }
+        }
+
+        (quotient, remainder)
+    }
 
     fn grobner(&self) -> Option<Self> {
         // let g = self.0;
@@ -228,12 +312,7 @@ fn s_polynomial() {}
 fn test_add_term() {
     let mut f1 =
         Polynomial::from_integer_vec(vec![(2, vec![0, 2]), (3, vec![1, 1]), (-4, vec![2, 0])]);
-    let f2 = Polynomial::from_integer_vec(vec![
-        (0, vec![0, 2]),
-        (3, vec![1, 1]),
-        (-4, vec![2, 0]),
-        (2, vec![1, 0]),
-    ]);
+    let f2 = Polynomial::from_integer_vec(vec![(3, vec![1, 1]), (-4, vec![2, 0]), (2, vec![1, 0])]);
     let t1 = Term {
         coeff: Rational::from(-2),
         mono: MultiIdx { idx: vec![0, 2] },
@@ -248,6 +327,23 @@ fn test_add_term() {
     println!("{:?}", f2);
     assert_eq!(f1, f2);
 }
+#[test]
+fn test_sub_term() {
+    let mut f1 =
+        Polynomial::from_integer_vec(vec![(2, vec![0, 2]), (3, vec![1, 1]), (-4, vec![2, 0])]);
+    let f2 = Polynomial::from_integer_vec(vec![(3, vec![1, 1]), (-4, vec![2, 0]), (2, vec![1, 0])]);
+    let t1 = Term {
+        coeff: Rational::from(2),
+        mono: MultiIdx { idx: vec![0, 2] },
+    };
+    let t2 = Term {
+        coeff: Rational::from(-2),
+        mono: MultiIdx { idx: vec![1, 0] },
+    };
+    f1.sub_term(&t1);
+    f1.sub_term(&t2);
+    assert_eq!(f1, f2);
+}
 
 #[test]
 fn test_add() {
@@ -260,6 +356,14 @@ fn test_add() {
         (-8, vec![2, 0]),
     ]);
     assert_eq!(f1 + f2, f3);
+}
+
+#[test]
+fn test_sub() {
+    let f1 = Polynomial::from_integer_vec(vec![(2, vec![0, 2]), (3, vec![1, 1]), (-4, vec![2, 0])]);
+    let f2 = Polynomial::from_integer_vec(vec![(3, vec![1, 2]), (3, vec![1, 1]), (-4, vec![2, 0])]);
+    let f3 = Polynomial::from_integer_vec(vec![(2, vec![0, 2]), (-3, vec![1, 2])]);
+    assert_eq!(f1 - f2, f3);
 }
 
 #[test]
@@ -296,11 +400,63 @@ fn test_mul2() {
     assert_eq!(f3, f4);
 }
 
-fn main() {
-    let idx1 = MultiIdx { idx: vec![3, 3] };
-    let idx2 = MultiIdx { idx: vec![2, 5] };
-    let idx3 = MultiIdx { idx: vec![4, 3] };
-    let mut v = vec![idx1, idx2, idx3];
-    v.sort();
-    println!("{:?}", v);
+#[test]
+fn test_leading_term() {
+    let f1 = Polynomial::from_integer_vec(vec![
+        (2, vec![2, 0]),
+        (3, vec![1, 1]),
+        (-4, vec![0, 2]),
+        (1, vec![1, 0]),
+        (3, vec![0, 1]),
+    ]);
+    let t = Term {
+        coeff: Rational::from(2),
+        mono: MultiIdx { idx: vec![2, 0] },
+    };
+    assert_eq!(f1.leading_term(), t);
 }
+
+#[test]
+fn test_devides() {
+    let t1 = Term {
+        coeff: Rational::from(14),
+        mono: MultiIdx { idx: vec![3, 2] },
+    };
+    let t2 = Term {
+        coeff: Rational::from(2),
+        mono: MultiIdx { idx: vec![2, 0] },
+    };
+    let t3 = Term {
+        coeff: Rational::from(5),
+        mono: MultiIdx { idx: vec![2, 0] },
+    };
+    let t4 = Term {
+        coeff: Rational::from(7),
+        mono: MultiIdx { idx: vec![2, 3] },
+    };
+    let t5 = Term {
+        coeff: Rational::from(7),
+        mono: MultiIdx { idx: vec![1, 2] },
+    };
+
+    assert_eq!(t2.devide(t1.clone()), Some(t5));
+    assert_eq!(t3.devide(t1.clone()), None);
+    assert_eq!(t4.devide(t1.clone()), None);
+}
+
+#[test]
+fn test_ideal_devide() {
+    let f = Polynomial::from_integer_vec(vec![(1, vec![2, 3]), (1, vec![1, 2])]);
+    let g1 = Polynomial::from_integer_vec(vec![(1, vec![2, 0]), (1, vec![0, 1])]);
+    let g2 = Polynomial::from_integer_vec(vec![(1, vec![1, 2]), (1, vec![0, 1])]);
+    let ideal = Ideal(vec![g1, g2]);
+    let (qs, r) = ideal.devide(&f);
+    let mut f2 = Polynomial::new(2);
+    for (q, g) in qs.iter().zip(ideal.0) {
+        f2 = f2 + (q.clone() * g.clone());
+    }
+    f2 = f2 + r;
+    assert_eq!(f, f2);
+}
+
+fn main() {}
