@@ -147,6 +147,9 @@ impl Polynomial {
         let t = self.p.iter().next_back().unwrap();
         Term::from((t.0.clone(), t.1.clone()))
     }
+    fn deg(&self) -> MultiIdx {
+        self.leading_term().mono
+    }
 
     fn is_zero(&self) -> bool {
         for (_, c) in self.p.iter() {
@@ -331,6 +334,30 @@ impl Ideal {
                 break;
             }
         }
+
+        loop {
+            let gs_old = gs.clone();
+            for (i, p) in gs_old.0.iter().enumerate() {
+                let mut removed = false;
+                for q in &gs_old.0 {
+                    if *p == *q {
+                        continue;
+                    }
+                    if q.deg().devisible(&p.deg()) {
+                        removed = true;
+                        break;
+                    }
+                }
+                if removed {
+                    gs.0.remove(i);
+                    break;
+                }
+            }
+            if gs.0.len() == gs_old.0.len() {
+                break;
+            }
+        }
+
         Some(gs)
     }
 }
