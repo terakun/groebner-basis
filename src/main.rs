@@ -360,6 +360,18 @@ impl Ideal {
 
         Some(gs)
     }
+
+    fn reduce(&self) -> Self {
+        let mut gs = self.clone();
+        let s = self.0.len();
+        for i in 0..s {
+            let f = self.0[i].clone();
+            gs.0.remove(i);
+            let (_, r) = gs.devide(&f);
+            gs.0.insert(i, r);
+        }
+        gs
+    }
 }
 
 fn s_polynomial(f: &Polynomial, g: &Polynomial) -> Polynomial {
@@ -532,6 +544,11 @@ fn main() {
     let g_ideal = ideal.grobner().unwrap();
     println!("grobner basis");
     for (i, g) in g_ideal.0.iter().enumerate() {
+        println!("g_{} = {}", i + 1, g);
+    }
+    println!("reduced grobner basis");
+    let g_ideal_reduced = g_ideal.reduce();
+    for (i, g) in g_ideal_reduced.0.iter().enumerate() {
         println!("g_{} = {}", i + 1, g);
     }
 }
