@@ -18,6 +18,15 @@ impl MultiIdx {
         }
         true
     }
+    fn lcm(&self, other: &Self) -> Self {
+        MultiIdx {
+            idx: self.idx
+                .iter()
+                .zip(&other.idx)
+                .map(|(a, b)| *a.max(b))
+                .collect(),
+        }
+    }
 }
 
 impl Ord for MultiIdx {
@@ -26,15 +35,20 @@ impl Ord for MultiIdx {
     }
 }
 
-// lexical ordering
+// graded lexicographic ordering
 impl PartialOrd for MultiIdx {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        for (a, b) in self.idx.iter().zip(&other.idx) {
-            if *a != *b {
-                return Some(a.cmp(&b));
+        let res = (self.idx.iter().sum::<u64>()).cmp(&other.idx.iter().sum());
+        if res != std::cmp::Ordering::Equal {
+            Some(res)
+        } else {
+            for (a, b) in self.idx.iter().zip(&other.idx) {
+                if *a != *b {
+                    return Some(a.cmp(&b));
+                }
             }
+            Some(Ordering::Equal)
         }
-        Some(Ordering::Equal)
     }
 }
 
@@ -78,7 +92,7 @@ impl From<(MultiIdx, Rational)> for Term {
 }
 impl Term {
     fn devisible(&self, other: &Term) -> bool {
-        (other.coeff % self.coeff == Rational::from(0)) && self.mono.devisible(&other.mono)
+        self.mono.devisible(&other.mono)
     }
     fn devide(&self, other: Term) -> Option<Self> {
         if self.devisible(&other) {
@@ -262,12 +276,10 @@ impl fmt::Display for Polynomial {
     }
 }
 
+#[derive(Clone)]
 struct Ideal(Vec<Polynomial>);
 
 impl Ideal {
-    fn new() -> Self {
-        Ideal(Vec::new())
-    }
     fn devisible(&self, f: &Polynomial) -> Option<usize> {
         for (i, g) in self.0.iter().enumerate() {
             if g.leading_term().devisible(&f.leading_term()) {
@@ -276,14 +288,12 @@ impl Ideal {
         }
         None
     }
-
     // returns (quotient,remainder)
     fn devide(&self, f: &Polynomial) -> (Vec<Polynomial>, Polynomial) {
         let mut quotient = vec![Polynomial::new(self.0[0].n); self.0.len()];
         let mut remainder = Polynomial::new(self.0[0].n);
         let mut f = f.clone();
         while !f.is_zero() {
-            println!("{}", f);
             if let Some(i) = self.devisible(&f) {
                 let q = self.0[i].leading_term().devide(f.leading_term()).unwrap();
                 quotient[i].add_term(&q);
@@ -301,12 +311,43 @@ impl Ideal {
     }
 
     fn grobner(&self) -> Option<Self> {
-        // let g = self.0;
-        None
+        let mut gs = self.clone();
+        loop {
+            let gs_old = gs.clone();
+            let mut modified = false;
+
+            let n = gs_old.0.len();
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let s = s_polynomial(&gs_old.0[i], &gs_old.0[j]);
+                    let (_, r) = gs_old.devide(&s);
+                    if !r.is_zero() {
+                        gs.0.push(r);
+                        modified = true;
+                    }
+                }
+            }
+            if !modified {
+                break;
+            }
+        }
+        Some(gs)
     }
 }
 
-fn s_polynomial() {}
+fn s_polynomial(f: &Polynomial, g: &Polynomial) -> Polynomial {
+    let flt = f.leading_term();
+    let glt = g.leading_term();
+    let lcm = Term {
+        coeff: Rational::from(1),
+        mono: flt.mono.lcm(&glt.mono),
+    };
+    let mut f2 = f.clone();
+    let mut g2 = g.clone();
+    f2.mul_term(&flt.devide(lcm.clone()).unwrap());
+    g2.mul_term(&glt.devide(lcm).unwrap());
+    f2 - g2
+}
 
 #[test]
 fn test_add_term() {
@@ -426,10 +467,6 @@ fn test_devides() {
         coeff: Rational::from(2),
         mono: MultiIdx { idx: vec![2, 0] },
     };
-    let t3 = Term {
-        coeff: Rational::from(5),
-        mono: MultiIdx { idx: vec![2, 0] },
-    };
     let t4 = Term {
         coeff: Rational::from(7),
         mono: MultiIdx { idx: vec![2, 3] },
@@ -440,7 +477,6 @@ fn test_devides() {
     };
 
     assert_eq!(t2.devide(t1.clone()), Some(t5));
-    assert_eq!(t3.devide(t1.clone()), None);
     assert_eq!(t4.devide(t1.clone()), None);
 }
 
@@ -459,4 +495,16 @@ fn test_ideal_devide() {
     assert_eq!(f, f2);
 }
 
-fn main() {}
+fn main() {
+    let f1 = Polynomial::from_integer_vec(vec![(1, vec![3, 0]), (-2, vec![1, 1])]);
+    let f2 = Polynomial::from_integer_vec(vec![(1, vec![2, 1]), (-2, vec![0, 2]), (1, vec![1, 0])]);
+    println!("f1 = {}", f1);
+    println!("f2 = {}", f2);
+
+    let ideal = Ideal(vec![f1, f2]);
+    let g_ideal = ideal.grobner().unwrap();
+    println!("grobner basis");
+    for (i, g) in g_ideal.0.iter().enumerate() {
+        println!("g_{} = {}", i + 1, g);
+    }
+}
